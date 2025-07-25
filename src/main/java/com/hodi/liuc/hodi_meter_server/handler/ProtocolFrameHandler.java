@@ -1,17 +1,23 @@
 package com.hodi.liuc.hodi_meter_server.handler;
 
+import com.google.errorprone.annotations.Var;
 import com.hodi.liuc.hodi_meter_server.entity.ProtocolFrame;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import java.time.LocalDateTime;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class ProtocolFrameHandler extends ChannelInboundHandlerAdapter {
     // 日志记录器
     private static final Logger logger = LoggerFactory.getLogger(ProtocolFrameHandler.class);
+    // 背压控制
+//    private static final Semaphore BACKPRESS = new Semaphore(1000);
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
@@ -21,21 +27,30 @@ public class ProtocolFrameHandler extends ChannelInboundHandlerAdapter {
             ctx.fireChannelRead(msg);
             return;
         }
-
         ProtocolFrame frame = (ProtocolFrame) msg;
-        try {
-            // 2. 日志记录接收到的协议帧信息
-            logFrameInfo(frame);
-
-            // 3. 执行业务逻辑
-            processBusinessLogic(ctx, frame);
-
-        } finally {
-            // 4. 关键！释放数据部分的ByteBuf内存
-            if (frame.getData() != null) {
+        // 异步处理前增加引用计数
+        frame.getData().retain();
+//        if (!BACKPRESS.tryAcquire()) {
+//            ctx.writeAndFlush(Unpooled.copiedBuffer(frame.getData()));
+//            frame.getData().release();
+//            return;
+//        }
+        // 异步处理
+        CompletableFuture.runAsync(() -> {
+            try {
+                // 2. 日志记录接收到的协议帧信息
+                logFrameInfo(frame);
+                // 3. 执行业务逻辑
+                processBusinessLogic(ctx, frame);
+            } finally {
                 frame.getData().release();
+                // 4. 关键！释放数据部分的ByteBuf内存
+                if (frame.getData() != null) {
+                    frame.getData().release();
+                }
             }
-        }
+        });
+
     }
 
     private void logFrameInfo(ProtocolFrame frame) {
@@ -59,16 +74,42 @@ public class ProtocolFrameHandler extends ChannelInboundHandlerAdapter {
 
         // 根据控制码执行不同操作
         switch (frame.getControlCode()) {
-            case (byte) 0xA4: // 示例：心跳包
+            case (byte) 0xA4: // 心跳包
                 handleHeartbeat(ctx, frame);
                 break;
             case (byte) 0xA1: // 登录帧
                 handleLoginUpload(ctx, frame);
                 break;
+            case (byte) 0x92:
+                handleDailyReport(ctx, frame);
+                break;
+            case (byte) 0x99:
+                handleAlarmReport(ctx, frame);
+                break;
             // 其他控制码处理...
             default:
                 logger.warn("未知控制码: 0x{}", String.format("%02X", frame.getControlCode()));
         }
+    }
+
+    /**
+     * 告警数据上报帧处理
+     */
+    private void handleAlarmReport(ChannelHandlerContext ctx, ProtocolFrame frame) {
+        // TODO:后续入库操作补充
+        logger.info("收到告警数据上报：{}", frame.getData());
+        byte controlCode = 0x1A;
+        ctx.writeAndFlush(new ProtocolFrame(frame.getRtua(), frame.getMstaSeq(), controlCode, Unpooled.EMPTY_BUFFER, 0));
+    }
+
+    /**
+     * 日常数据上报帧处理
+     */
+    private void handleDailyReport(ChannelHandlerContext ctx, ProtocolFrame frame) {
+        // TODO：后续入库操作补充
+        logger.info("收到日常数据上报：{}", frame.getData());
+        byte controlCode = 0x1B;
+        ctx.writeAndFlush(new ProtocolFrame(frame.getRtua(), frame.getMstaSeq(), controlCode, Unpooled.EMPTY_BUFFER, 0));
     }
 
     /**

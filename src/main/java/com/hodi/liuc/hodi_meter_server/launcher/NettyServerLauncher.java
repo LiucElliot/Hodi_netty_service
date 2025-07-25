@@ -8,7 +8,9 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import io.netty.util.concurrent.DefaultThreadFactory;
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,8 +18,6 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PreDestroy;
-
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
@@ -34,6 +34,8 @@ public class NettyServerLauncher implements CommandLineRunner, DisposableBean {
     private final EventLoopGroup bossGroup = new NioEventLoopGroup(bossThreads, new DefaultThreadFactory("netty-boss"));
     private final EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads, new DefaultThreadFactory("netty-worker"));
     private Channel serverChannel;
+
+    private final EventExecutorGroup businessGroup = new DefaultEventExecutorGroup(16, new DefaultThreadFactory("netty-business"));
 
     @Override
     public void run(String... args) throws Exception {
@@ -58,8 +60,8 @@ public class NettyServerLauncher implements CommandLineRunner, DisposableBean {
                             // 1. 添加协议解码器、编码器
                             pipeline.addLast("frameDecoder", new ProtocolDecoder());
                             pipeline.addLast("frameEncoder", new ProtocolEncoder());
-                            // 2. 添加业务处理器
-                            pipeline.addLast("frameHandler", new ProtocolFrameHandler());
+                            // 2. 添加业务处理器，绑定到独立线程
+                            pipeline.addLast(businessGroup, "frameHandler", new ProtocolFrameHandler());
                             // 3. 资源释放处理器
                             pipeline.addLast("resourceRelease", new ResourceReleaseHandler());
                         }
@@ -92,6 +94,8 @@ public class NettyServerLauncher implements CommandLineRunner, DisposableBean {
     @Override
     @PreDestroy  // Spring容器销毁前调用
     public void destroy() {
+        log.info("关闭业务线程池...");
+        businessGroup.shutdownGracefully();
         stopNettyServer();
     }
 

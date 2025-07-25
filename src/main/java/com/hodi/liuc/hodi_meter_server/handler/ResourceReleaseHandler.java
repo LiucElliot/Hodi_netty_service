@@ -1,6 +1,5 @@
 package com.hodi.liuc.hodi_meter_server.handler;
 
-import com.hodi.liuc.hodi_meter_server.entity.ProtocolFrame;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
