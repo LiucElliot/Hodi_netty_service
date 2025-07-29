@@ -35,7 +35,9 @@ netty:
       connect-timeout: 30000
       read-timeout: 60000
       write-timeout: 60000
-    
+  heartbeat:
+    interval: 30
+
     # 子服务器配置（可选）
     sub:
       port: 9091

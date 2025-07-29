@@ -1,23 +1,32 @@
 package com.hodi.liuc.hodi_meter_server.launcher;
 
+import com.hodi.liuc.hodi_meter_server.command_issued.impl.CommandServiceImpl;
+import com.hodi.liuc.hodi_meter_server.command_issued.manager.ConnectionManager;
 import com.hodi.liuc.hodi_meter_server.decoder.ProtocolDecoder;
 import com.hodi.liuc.hodi_meter_server.encoder.ProtocolEncoder;
+import com.hodi.liuc.hodi_meter_server.handler.DeviceConnectionHandler;
+import com.hodi.liuc.hodi_meter_server.handler.HeartbeatHandler;
 import com.hodi.liuc.hodi_meter_server.handler.ProtocolFrameHandler;
 import com.hodi.liuc.hodi_meter_server.handler.ResourceReleaseHandler;
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PreDestroy;
+
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
@@ -29,13 +38,23 @@ public class NettyServerLauncher implements CommandLineRunner, DisposableBean {
     private int bossThreads;
     @Value("${netty.server.main.worker-threads}")
     private int workerThreads;
+    @Value("${netty.heartbeat.interval}")
+    private int heartbeatInterval;
 
     // [线程安全设计] 使用final确保线程组可见性
     private final EventLoopGroup bossGroup = new NioEventLoopGroup(bossThreads, new DefaultThreadFactory("netty-boss"));
     private final EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads, new DefaultThreadFactory("netty-worker"));
     private Channel serverChannel;
-
     private final EventExecutorGroup businessGroup = new DefaultEventExecutorGroup(16, new DefaultThreadFactory("netty-business"));
+
+    private final ConnectionManager connectionManager;
+    private final CommandServiceImpl commandService;
+
+    @Autowired
+    public NettyServerLauncher(ConnectionManager connectionManager, CommandServiceImpl commandService) {
+        this.connectionManager = connectionManager;
+        this.commandService = commandService;
+    }
 
     @Override
     public void run(String... args) throws Exception {
@@ -53,16 +72,24 @@ public class NettyServerLauncher implements CommandLineRunner, DisposableBean {
                     .childOption(ChannelOption.SO_KEEPALIVE, true)
                     // [生产优化] 禁用Nagle算法降低延迟
                     .childOption(ChannelOption.TCP_NODELAY, true)
+                    // 使用内存池
+                    .childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
+                    // 流程
                     .childHandler(new ChannelInitializer<>() {
                         @Override
                         protected void initChannel(Channel ch) {
                             ChannelPipeline pipeline = ch.pipeline();
+                            // 全局被动心跳检测（读空闲）
+                            pipeline.addLast("idleStateHandler", new IdleStateHandler(heartbeatInterval, 0, 0, TimeUnit.SECONDS));
+                            pipeline.addLast("heartbeatHandler", new HeartbeatHandler());
                             // 1. 添加协议解码器、编码器
                             pipeline.addLast("frameDecoder", new ProtocolDecoder());
                             pipeline.addLast("frameEncoder", new ProtocolEncoder());
-                            // 2. 添加业务处理器，绑定到独立线程
+                            // 2. 添加设备连接管理器
+                            pipeline.addLast("deviceConnHandler", new DeviceConnectionHandler(connectionManager));
+                            // 3. 添加业务处理器，绑定到独立线程
                             pipeline.addLast(businessGroup, "frameHandler", new ProtocolFrameHandler());
-                            // 3. 资源释放处理器
+                            // 4. 资源释放处理器
                             pipeline.addLast("resourceRelease", new ResourceReleaseHandler());
                         }
                     });

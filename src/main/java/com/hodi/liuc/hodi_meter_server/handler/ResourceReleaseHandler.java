@@ -5,7 +5,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import lombok.extern.slf4j.Slf4j;
 
-// 自定义资源释放Handler（需实现）
+// 自定义资源释放Handler
 @Slf4j
 public class ResourceReleaseHandler extends ChannelInboundHandlerAdapter {
     @Override
@@ -26,6 +26,5 @@ public class ResourceReleaseHandler extends ChannelInboundHandlerAdapter {
         log.error("Channel exception", cause);
         ctx.close();
     }
-
 
 }

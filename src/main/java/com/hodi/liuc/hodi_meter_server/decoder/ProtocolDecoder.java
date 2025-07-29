@@ -8,7 +8,10 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 
 import java.util.List;
 
-// ProtocolDecoder.java
+/**
+ * 协议解码层
+ * 字节流到协议帧的转换在此！！！
+ */
 public class ProtocolDecoder extends ByteToMessageDecoder {
     private static final int MIN_FRAME_LENGTH = 12;
     private static final byte START_FLAG = 0x68;
@@ -47,18 +50,22 @@ public class ProtocolDecoder extends ByteToMessageDecoder {
     private byte calculateChecksum(byte[] rtua, byte[] mstaSeq,
                                    byte controlCode, int dataLength, ByteBuf data) {
         ByteBuf buf = Unpooled.buffer();
-        buf.writeByte(START_FLAG)
-                .writeBytes(rtua)
-                .writeBytes(mstaSeq)
-                .writeByte(START_FLAG)
-                .writeByte(controlCode)
-                .writeShortLE(dataLength)
-                .writeBytes(data, data.readerIndex(), data.readableBytes());
+        try {
+            buf.writeByte(START_FLAG)
+                    .writeBytes(rtua)
+                    .writeBytes(mstaSeq)
+                    .writeByte(START_FLAG)
+                    .writeByte(controlCode)
+                    .writeShortLE(dataLength)
+                    .writeBytes(data, data.readerIndex(), data.readableBytes());
 
-        int sum = 0;
-        while (buf.isReadable()) sum = (sum + buf.readUnsignedByte()) & 0xFF;
-        buf.release();
-        return (byte) sum;
+            int sum = 0;
+            while (buf.isReadable()) sum = (sum + buf.readUnsignedByte()) & 0xFF;
+            buf.release();
+            return (byte) sum;
+        } finally {
+            buf.release();
+        }
     }
 
 }
